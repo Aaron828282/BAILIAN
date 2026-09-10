@@ -62,6 +62,14 @@ test('不同中转 Key 使用同一幂等键不会串单或读取对方结果',a
   const usage=await (await h.call('/v1/usage',{headers:auth(a.token)})).json();assert.equal(usage.total,1);assert.equal(usage.items[0].cost,0.1);assert.equal(usage.items[0].keyId,undefined);
   assert.equal((await h.call('/v1/tasks/'+ids[0])).status,404);
 });
+test('X-Relay-Key 查询仍保持任务归属隔离',async t=>{
+  const h=await httpSetup(t,async()=>response(output));h.store.addKeys([key()]);tariff(h.store,image.model,'default',{unit:'0.1'});
+  const a=await client(h),b=await client(h);
+  const created=await h.call('/v1/images/generations',{method:'POST',data:image,headers:auth(a.token)});
+  assert.equal(created.status,200);const id=(await created.json()).id;
+  assert.equal((await h.call('/v1/tasks/'+id,{auth:false,headers:{'X-Relay-Key':a.token}})).status,200);
+  assert.equal((await h.call('/v1/tasks/'+id,{auth:false,headers:{'X-Relay-Key':b.token}})).status,404);
+});
 test('网络不明保留预算和余额；人工核对按原单价结算',async t=>{
   const h=await httpSetup(t,async()=>{throw Error('断网');});h.store.addKeys([key()]);const c=await client(h);
   tariff(h.store,image.model,'default',{unit:'0.2'});
