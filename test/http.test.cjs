@@ -16,6 +16,18 @@ test('管理鉴权、CSRF、令牌分离和私有文件隔离',async t=>{
   for(const path of ['/resources/client-material.json','/.env','/data/relay.sqlite','/src/main.cjs'])assert.equal((await h.call(path,{auth:false})).status,404);
   assert.equal((await h.call('/oai/v1/models')).status,200);
 });
+test('中转鉴权兼容 X-Relay-Key 与 Bearer 空白，并拒绝冲突或畸形凭据',async t=>{
+  const h=await httpSetup(t);
+  assert.equal((await h.call('/v1/models',{auth:false,headers:{'X-Relay-Key':h.token}})).status,200);
+  assert.equal((await h.call('/v1/models',{auth:false,headers:{Authorization:'  Bearer   '+h.token+'  '}})).status,200);
+
+  let res=await h.call('/v1/models',{auth:false});
+  assert.equal(res.status,401);assert.equal((await res.json()).error.code,'AUTH_REQUIRED');
+  res=await h.call('/v1/models',{auth:false,headers:{Authorization:'Token '+h.token}});
+  assert.equal(res.status,401);assert.equal((await res.json()).error.code,'AUTH_FORMAT_INVALID');
+  res=await h.call('/v1/models',{auth:false,headers:{Authorization:'Bearer '+h.token,'X-Relay-Key':'x'.repeat(64)}});
+  assert.equal(res.status,401);assert.equal((await res.json()).error.code,'AUTH_CONFLICT');
+});
 test('管理员导入、包预览、备份下载和密码更改',async t=>{
   const h=await httpSetup(t);await h.login();
   const preview=await h.call('/api/packages/preview',{method:'POST',admin:true,data:{content:h.f.raw}});const p=await preview.text();assert.equal(preview.status,200);assert.ok(!p.includes(h.f.payload.keys[0].apiKey));
