@@ -3,5 +3,5 @@
 data/
 dist/
 artifacts/
-node_modules/
+/node_modules/
 *.log
