@@ -1,0 +1,8 @@
+{$PUBLIC_HOST} {
+    request_body {
+        max_size 45MB
+    }
+    reverse_proxy relay:3480 {
+        flush_interval -1
+    }
+}

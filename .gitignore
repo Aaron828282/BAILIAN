@@ -1,0 +1,7 @@
+.env
+管理员登录.txt
+data/
+dist/
+artifacts/
+node_modules/
+*.log

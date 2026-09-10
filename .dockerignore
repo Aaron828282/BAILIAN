@@ -1,0 +1,13 @@
+*
+!package.json
+!Dockerfile
+!src
+!src/**
+!public
+!public/**
+!vendor
+!vendor/**
+!resources
+!resources/client-material.json
+!scripts
+!scripts/**
