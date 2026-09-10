@@ -15,6 +15,22 @@ async function body(req,max=1024*1024,reserveBytes=()=>{}) {
   fields(data,Object.keys(data||{}));return data;
 }
 function cookie(req){const value=String(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith('brw_session='));return value?.slice(12)||'';}
+function relayTokenFromRequest(req){
+  const directHeader=req.headers['x-relay-key'],authorizationHeader=req.headers.authorization;
+  if(Array.isArray(directHeader)||Array.isArray(authorizationHeader))fail('AUTH_FORMAT_INVALID','鉴权请求头不允许重复',401);
+  const directToken=String(directHeader||'').trim(),authorization=String(authorizationHeader||'').trim();
+  let bearerToken='';
+  if(authorization){
+    const match=/^Bearer[ \t]+([^\s"'<>]+)$/i.exec(authorization);
+    if(!match)fail('AUTH_FORMAT_INVALID','Authorization 格式应为 Bearer 加英文空格再加中转 Key',401);
+    bearerToken=match[1];
+  }
+  if(directToken&&(/[\s"'<>]/.test(directToken)))fail('AUTH_FORMAT_INVALID','X-Relay-Key 格式无效',401);
+  if(directToken&&bearerToken&&!equal(directToken,bearerToken))fail('AUTH_CONFLICT','X-Relay-Key 与 Authorization 使用了不同的中转 Key',401);
+  const token=directToken||bearerToken;
+  if(!token)fail('AUTH_REQUIRED','请通过 X-Relay-Key 或 Authorization 提供中转 Key',401);
+  return token;
+}
 function createApp({store,material,publicUrl,relayToken,fetchImpl,timeout,publicDir=path.join(__dirname,'../public')}) {
   const base=new URL(publicUrl),relay=new Relay(store,fetchImpl,timeout),attempts=new Map();let active=0,closing=false,globalAttempts=[],allocatedBytes=0;
   const readBody=(req,max)=>body(req,max,n=>{if(allocatedBytes+n>80*1024*1024)fail('BODY_CAPACITY','当前请求体积较大，请稍后重试',503);allocatedBytes+=n;req.bodyBytes=(req.bodyBytes||0)+n;});
@@ -33,8 +49,7 @@ function createApp({store,material,publicUrl,relayToken,fetchImpl,timeout,public
       const url=new URL(req.url,'http://local'),route=url.pathname.replace(/^\/oai\/v1(?=\/|$)/,'/v1'),method=req.method;
       if(route==='/healthz'&&method==='GET')return json(res,200,{ok:true,service:'bailian-relay',version:require('../package.json').version});
       if(route.startsWith('/v1/')){
-        const bearer=/^Bearer ([^\s]+)$/i.exec(String(req.headers.authorization||''));
-        req.relayKey=store.authenticateRelay(bearer?.[1]);
+        req.relayKey=store.authenticateRelay(relayTokenFromRequest(req));
         if(req.headers.origin)checkOrigin(req);
         if(method==='GET'&&route==='/v1/models')return json(res,200,{object:'list',data:MODELS.filter(m=>JSON.parse(req.relayKey.models).includes(m.id)).map(m=>({id:m.id,object:'model',owned_by:'alibaba',kind:m.kind}))});
         if(method==='GET'&&route==='/v1/balance'){const k=store.relayKeyDto(req.relayKey);return json(res,200,{currency:'CNY',mode:k.mode,credit:k.credit,spent:k.spent,held:k.held,balance:k.mode==='legacy'?null:k.balance,available:k.mode==='legacy'?null:k.available});}
