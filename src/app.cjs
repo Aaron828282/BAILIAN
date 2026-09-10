@@ -48,6 +48,14 @@ function createApp({store,material,publicUrl,relayToken,fetchImpl,timeout,public
     try{
       const url=new URL(req.url,'http://local'),route=url.pathname.replace(/^\/oai\/v1(?=\/|$)/,'/v1'),method=req.method;
       if(route==='/healthz'&&method==='GET')return json(res,200,{ok:true,service:'bailian-relay',version:require('../package.json').version});
+      if(method==='GET'&&/^\/v1\/tasks\/[a-zA-Z0-9_-]+$/.test(route)){
+        // The request ID is an unguessable capability URL. This read-only endpoint is
+        // intentionally public so workflow runners can poll without forwarding a key.
+        const r=store.getRequest(route.split('/').pop());if(!r)fail('NOT_FOUND','请求不存在',404);
+        const result=store.result(r),dto=store.requestDto(r);
+        const {keyId,relayKeyId,relayKeyLabel,billingMode,reservedCost,cost,billingUsage,...publicDto}=dto;
+        return json(res,200,result?.streamEvents?{...publicDto,message:'流式请求已完成'}:result||publicDto);
+      }
       if(route.startsWith('/v1/')){
         req.relayKey=store.authenticateRelay(relayTokenFromRequest(req));
         if(req.headers.origin)checkOrigin(req);
@@ -55,10 +63,6 @@ function createApp({store,material,publicUrl,relayToken,fetchImpl,timeout,public
         if(method==='GET'&&route==='/v1/balance'){const k=store.relayKeyDto(req.relayKey);return json(res,200,{currency:'CNY',mode:k.mode,credit:k.credit,spent:k.spent,held:k.held,balance:k.mode==='legacy'?null:k.balance,available:k.mode==='legacy'?null:k.available});}
         if(method==='GET'&&route==='/v1/pricing'){const prices=store.pricing();prices.items=prices.items.filter(p=>JSON.parse(req.relayKey.models).includes(p.model));return json(res,200,prices);}
         if(method==='GET'&&route==='/v1/usage'){const data=store.requests('',Number(url.searchParams.get('page')||1),req.relayKey.id);data.items=data.items.map(({keyId,relayKeyLabel,...r})=>r);return json(res,200,data);}
-        if(method==='GET'&&/^\/v1\/tasks\/[a-zA-Z0-9_-]+$/.test(route)){
-          const r=store.getRequest(route.split('/').pop());if(!r||r.relay_key_id!==req.relayKey.id)fail('NOT_FOUND','请求不存在',404);
-          const result=store.result(r);return json(res,200,result?.streamEvents?{...store.requestDto(r),message:'流式请求已完成'}:result||store.requestDto(r));
-        }
         const kind={'/v1/chat/completions':'text','/v1/images/generations':'image','/v1/videos/generations':'video'}[route];
         if(method==='POST'&&kind){const data=await readBody(req,kind==='text'?1024*1024:45*1024*1024);return await relay.handle(kind,data,req,res);}
         fail('NOT_FOUND','接口不存在',404);

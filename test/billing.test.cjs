@@ -53,22 +53,24 @@ test('并发余额预占、单次结算和同 Key 幂等不重复扣费',async t
   assert.equal(h.store.getRequest(id).charged,200000);
   assert.equal(h.store.one("SELECT count(*) AS n FROM billing_ledger WHERE relay_key_id=? AND kind='charge'",c.key.id).n,1);
 });
-test('不同中转 Key 使用同一幂等键不会串单或读取对方结果',async t=>{
+test('不同中转 Key 使用同一幂等键不会串单，任务 ID 可公开查询',async t=>{
   let calls=0;const h=await httpSetup(t,async()=>{calls++;return response(output);});h.store.addKeys([key()]);tariff(h.store,image.model,'default',{unit:'0.1'});
   const a=await client(h),b=await client(h),ids=[];
   for(const c of [a,b]){const res=await h.call('/v1/images/generations',{method:'POST',data:image,headers:{...auth(c.token),'Idempotency-Key':'same-client-idem'}});assert.equal(res.status,200);ids.push((await res.json()).id);}
   assert.notEqual(ids[0],ids[1]);assert.equal(calls,2);
-  assert.equal((await h.call('/v1/tasks/'+ids[0],{headers:auth(b.token)})).status,404);
+  assert.equal((await h.call('/v1/tasks/'+ids[0],{headers:auth(b.token)})).status,200);
   const usage=await (await h.call('/v1/usage',{headers:auth(a.token)})).json();assert.equal(usage.total,1);assert.equal(usage.items[0].cost,0.1);assert.equal(usage.items[0].keyId,undefined);
-  assert.equal((await h.call('/v1/tasks/'+ids[0])).status,404);
+  assert.equal((await h.call('/v1/tasks/'+ids[0],{auth:false})).status,200);
 });
-test('X-Relay-Key 查询仍保持任务归属隔离',async t=>{
+test('任务状态查询无需中转 Key，未知任务仍返回 404',async t=>{
   const h=await httpSetup(t,async()=>response(output));h.store.addKeys([key()]);tariff(h.store,image.model,'default',{unit:'0.1'});
   const a=await client(h),b=await client(h);
   const created=await h.call('/v1/images/generations',{method:'POST',data:image,headers:auth(a.token)});
   assert.equal(created.status,200);const id=(await created.json()).id;
-  assert.equal((await h.call('/v1/tasks/'+id,{auth:false,headers:{'X-Relay-Key':a.token}})).status,200);
-  assert.equal((await h.call('/v1/tasks/'+id,{auth:false,headers:{'X-Relay-Key':b.token}})).status,404);
+  const publicTask=await h.call('/v1/tasks/'+id,{auth:false});assert.equal(publicTask.status,200);
+  const publicData=await publicTask.json();assert.equal(publicData.id,id);assert.equal(publicData.keyId,undefined);assert.equal(publicData.relayKeyId,undefined);
+  assert.equal((await h.call('/v1/tasks/'+id,{auth:false,headers:{'X-Relay-Key':b.token}})).status,200);
+  assert.equal((await h.call('/v1/tasks/req_not_found',{auth:false})).status,404);
 });
 test('网络不明保留预算和余额；人工核对按原单价结算',async t=>{
   const h=await httpSetup(t,async()=>{throw Error('断网');});h.store.addKeys([key()]);const c=await client(h);
